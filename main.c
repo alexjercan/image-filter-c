@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) {
                           ARGUMENT_TYPE_VALUE);
     argparse_add_argument(parser, 'o', "output", "output file name",
                           ARGUMENT_TYPE_VALUE);
-    argparse_add_argument(parser, 'f', "filter", "filter name",
+    argparse_add_argument(parser, 'f', "filter", "filter name: blur",
                           ARGUMENT_TYPE_VALUE);
 
     argparse_parse(parser, argc, argv);

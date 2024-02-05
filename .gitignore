@@ -1,3 +1,7 @@
+build/*
 main
 *.pbm
 *.png
+compile_flags.txt
+diff.o
+diff

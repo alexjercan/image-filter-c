@@ -18,16 +18,33 @@
 
 #define BLUR_KERNEL_NAME "blur"
 #define BLUR_KERNEL_SIZE 3
-#define BLUR_KERNEL                                                            \
-    {                                                                          \
-        1.0f / 16.0f, 2.0f / 16.0f, 1.0f / 16.0f, 2.0f / 16.0f, 4.0f / 16.0f,  \
-            2.0f / 16.0f, 1.0f / 16.0f, 2.0f / 16.0f, 1.0f / 16.0f             \
-    }
+const float BLUR_KERNEL[] =
+    {
+        1.0f / 16.0f, 2.0f / 16.0f, 1.0f / 16.0f, 2.0f / 16.0f, 4.0f / 16.0f,
+            2.0f / 16.0f, 1.0f / 16.0f, 2.0f / 16.0f, 1.0f / 16.0f
+    };
+
+#define SHARPEN_KERNEL_NAME "sharpen"
+#define SHARPEN_KERNEL_SIZE 3
+const float SHARPEN_KERNEL[] = { 0.0f, -1.0f, 0.0f, -1.0f, 5.0f, -1.0f, 0.0f, -1.0f, 0.0f };
+
+#define EDGE_KERNEL_NAME "edge"
+#define EDGE_KERNEL_SIZE 3
+const float EDGE_KERNEL[] = { 0.0f, -1.0f, 0.0f, -1.0f, 4.0f, -1.0f, 0.0f, -1.0f, 0.0f };
+
+#define EMBOSS_KERNEL_NAME "emboss"
+#define EMBOSS_KERNEL_SIZE 3
+const float EMBOSS_KERNEL[] = { -2.0f, -1.0f, 0.0f, -1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 2.0f };
 
 struct kernel {
         int size;
-        float *values;
+        const float *values;
 };
+
+void kernel_init(struct kernel *k, int size, const float *values) {
+    k->size = size;
+    k->values = values;
+}
 
 struct kernel *kernel_new(const char *name) {
     struct kernel *k = malloc(sizeof(struct kernel));
@@ -36,16 +53,13 @@ struct kernel *kernel_new(const char *name) {
     }
 
     if (strcmp(name, BLUR_KERNEL_NAME) == 0) {
-        k->size = BLUR_KERNEL_SIZE;
-        k->values = malloc(k->size * k->size * sizeof(float));
-        if (k->values == NULL) {
-            LOG_ERROR("Could not allocate memory for kernel values");
-            free(k);
-            return NULL;
-        }
-
-        float kernel[BLUR_KERNEL_SIZE * BLUR_KERNEL_SIZE] = BLUR_KERNEL;
-        memcpy(k->values, kernel, k->size * k->size * sizeof(float));
+        kernel_init(k, BLUR_KERNEL_SIZE, BLUR_KERNEL);
+    } else if (strcmp(name, SHARPEN_KERNEL_NAME) == 0) {
+        kernel_init(k, SHARPEN_KERNEL_SIZE, SHARPEN_KERNEL);
+    } else if (strcmp(name, EDGE_KERNEL_NAME) == 0) {
+        kernel_init(k, EDGE_KERNEL_SIZE, EDGE_KERNEL);
+    } else if (strcmp(name, EMBOSS_KERNEL_NAME) == 0) {
+        kernel_init(k, EMBOSS_KERNEL_SIZE, EMBOSS_KERNEL);
     } else {
         LOG_ERROR("Unknown kernel name: %s", name);
         free(k);
@@ -64,7 +78,6 @@ float kernel_get_value(struct kernel *k, int x, int y) {
 }
 
 void kernel_free(struct kernel *k) {
-    free(k->values);
     free(k);
 }
 
@@ -149,6 +162,11 @@ struct image *image_apply_kernel(struct image *img, struct kernel *k) {
                     }
                 }
 
+                if (accum < 0.0f) {
+                    accum = 0.0f;
+                } else if (accum > 255.0f) {
+                    accum = 255.0f;
+                }
                 new_img->bytes[(y * img->width + x) * img->channels + c] =
                     (stbi_uc)accum;
             }

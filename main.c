@@ -4,8 +4,19 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define return_defer(code)                                                     \
+    do {                                                                       \
+        result = code;                                                         \
+        goto defer;                                                            \
+    } while (0)
+
+#define LOG_ERROR(format, ...)                                                 \
+    fprintf(stderr, "ERROR: %s:%d: " format "\n", __FILE__, __LINE__,          \
+            ##__VA_ARGS__)
+
 #define NUM_CHANNELS 3
 
+#define BLUR_KERNEL_NAME "blur"
 #define BLUR_KERNEL_SIZE 3
 #define BLUR_KERNEL                                                            \
     {                                                                          \
@@ -18,16 +29,17 @@ struct kernel {
         float *values;
 };
 
-struct kernel *new_kernel(const char *name) {
+struct kernel *kernel_new(const char *name) {
     struct kernel *k = malloc(sizeof(struct kernel));
     if (k == NULL) {
         return NULL;
     }
 
-    if (strcmp(name, "blur") == 0) {
+    if (strcmp(name, BLUR_KERNEL_NAME) == 0) {
         k->size = BLUR_KERNEL_SIZE;
         k->values = malloc(k->size * k->size * sizeof(float));
         if (k->values == NULL) {
+            LOG_ERROR("Could not allocate memory for kernel values");
             free(k);
             return NULL;
         }
@@ -35,6 +47,7 @@ struct kernel *new_kernel(const char *name) {
         float kernel[BLUR_KERNEL_SIZE * BLUR_KERNEL_SIZE] = BLUR_KERNEL;
         memcpy(k->values, kernel, k->size * k->size * sizeof(float));
     } else {
+        LOG_ERROR("Unknown kernel name: %s", name);
         free(k);
         return NULL;
     }
@@ -42,7 +55,15 @@ struct kernel *new_kernel(const char *name) {
     return k;
 }
 
-void free_kernel(struct kernel *k) {
+float kernel_get_value(struct kernel *k, int x, int y) {
+    if (x < 0 || x >= k->size || y < 0 || y >= k->size) {
+        return 0.0f;
+    }
+
+    return k->values[y * k->size + x];
+}
+
+void kernel_free(struct kernel *k) {
     free(k->values);
     free(k);
 }
@@ -54,9 +75,10 @@ struct image {
         stbi_uc *bytes;
 };
 
-struct image *new_image(int width, int height, int channels) {
+struct image *image_new(int width, int height, int channels) {
     struct image *img = malloc(sizeof(struct image));
     if (img == NULL) {
+        LOG_ERROR("Could not allocate memory for image");
         return NULL;
     }
 
@@ -65,6 +87,7 @@ struct image *new_image(int width, int height, int channels) {
     img->channels = channels;
     img->bytes = malloc(width * height * channels * sizeof(stbi_uc));
     if (img->bytes == NULL) {
+        LOG_ERROR("Could not allocate memory for image bytes");
         free(img);
         return NULL;
     }
@@ -72,15 +95,17 @@ struct image *new_image(int width, int height, int channels) {
     return img;
 }
 
-struct image *load_image(const char *filename) {
+struct image *image_load(const char *filename) {
     struct image *img = malloc(sizeof(struct image));
     if (img == NULL) {
+        LOG_ERROR("Could not allocate memory for image");
         return NULL;
     }
 
     img->bytes = stbi_load(filename, &img->width, &img->height, &img->channels,
                            NUM_CHANNELS);
     if (img->bytes == NULL) {
+        LOG_ERROR("Could not load image: %s", filename);
         free(img);
         return NULL;
     }
@@ -88,12 +113,12 @@ struct image *load_image(const char *filename) {
     return img;
 }
 
-void free_image(struct image *img) {
+void image_free(struct image *img) {
     stbi_image_free(img->bytes);
     free(img);
 }
 
-stbi_uc get_pixel(struct image *img, int x, int y, int c) {
+stbi_uc image_get_pixel(struct image *img, int x, int y, int c) {
     if (x < 0 || x >= img->width || y < 0 || y >= img->height || c < 0 ||
         c >= img->channels) {
         return 0;
@@ -102,8 +127,11 @@ stbi_uc get_pixel(struct image *img, int x, int y, int c) {
     return img->bytes[(y * img->width + x) * img->channels + c];
 }
 
-struct image *apply_kernel(struct image *img, struct kernel *k) {
-    struct image *new_img = new_image(img->width, img->height, img->channels);
+struct image *image_apply_kernel(struct image *img, struct kernel *k) {
+    struct image *new_img = image_new(img->width, img->height, img->channels);
+    if (new_img == NULL) {
+        return NULL;
+    }
 
     for (int y = 0; y < img->height; y++) {
         for (int x = 0; x < img->width; x++) {
@@ -115,9 +143,9 @@ struct image *apply_kernel(struct image *img, struct kernel *k) {
                         int img_x = x + kx - k->size / 2;
                         int img_y = y + ky - k->size / 2;
 
-                        accum += get_pixel(img, img_x, img_y, c) *
-                                 k->values[(k->size - ky - 1) * k->size +
-                                           (k->size - kx - 1)];
+                        accum += image_get_pixel(img, img_x, img_y, c) *
+                                 kernel_get_value(k, (k->size - kx - 1),
+                                                  (k->size - ky - 1));
                     }
                 }
 
@@ -130,11 +158,11 @@ struct image *apply_kernel(struct image *img, struct kernel *k) {
     return new_img;
 }
 
-void save_image_png(struct image *img, const char *filename) {
+int image_write_pbm(struct image *img, const char *filename) {
     FILE *file = fopen(filename, "wb");
     if (file == NULL) {
-        fprintf(stderr, "failed to open file for writing\n");
-        return;
+        LOG_ERROR("Could not open file: %s", filename);
+        return 1;
     }
 
     fprintf(file, "P6\n%d %d\n255\n", img->width, img->height);
@@ -142,9 +170,16 @@ void save_image_png(struct image *img, const char *filename) {
            img->width * img->height * img->channels, file);
 
     fclose(file);
+
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
+    int result = 0;
+    struct image *img = NULL;
+    struct kernel *k = NULL;
+    struct image *new_img = NULL;
+
     struct argparse_parser *parser = argparse_new(
         "image filter", "image filter basic implementation", "0.0.1");
     argparse_add_argument(parser, 'v', "version", "print version",
@@ -163,17 +198,13 @@ int main(int argc, char *argv[]) {
     unsigned int help = argparse_get_flag(parser, "help");
     if (help) {
         argparse_print_help(parser);
-
-        argparse_free(parser);
-        return 0;
+        return_defer(0);
     }
 
     unsigned int version = argparse_get_flag(parser, "version");
     if (version) {
         argparse_print_version(parser);
-
-        argparse_free(parser);
-        return 0;
+        return_defer(0);
     }
 
     char *input = argparse_get_value(parser, "input");
@@ -181,27 +212,40 @@ int main(int argc, char *argv[]) {
     char *filter = argparse_get_value(parser, "filter");
 
     if (input == NULL || output == NULL || filter == NULL) {
-        printf("input, output and filter are required\n");
+        LOG_ERROR("input, output and filter are required");
         argparse_print_help(parser);
 
-        argparse_free(parser);
-        return 1;
+        return_defer(1);
     }
 
-    struct image *img = load_image(input);
+    img = image_load(input);
     if (img == NULL) {
-        fprintf(stderr, "failed to load image\n");
-        argparse_free(parser);
-        return 1;
+        return_defer(1);
     }
 
-    struct kernel *k = new_kernel(filter);
-    struct image *new_img = apply_kernel(img, k);
+    k = kernel_new(filter);
+    if (k == NULL) {
+        return_defer(1);
+    }
 
-    save_image_png(new_img, output);
+    new_img = image_apply_kernel(img, k);
+    if (new_img == NULL) {
+        return_defer(1);
+    }
 
-    free_kernel(k);
-    free_image(img);
-    argparse_free(parser);
-    return 0;
+    if (image_write_pbm(new_img, output) != 0) {
+        return_defer(1);
+    }
+
+defer:
+    if (new_img)
+        image_free(new_img);
+    if (k)
+        kernel_free(k);
+    if (img)
+        image_free(img);
+    if (parser)
+        argparse_free(parser);
+
+    return result;
 }

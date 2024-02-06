@@ -5,13 +5,6 @@
 
 #define NUM_CHANNELS 3
 
-struct image {
-        int width;
-        int height;
-        int channels;
-        stbi_uc *bytes;
-};
-
 static stbi_uc image_get_pixel(struct image *img, int x, int y, int c);
 
 struct image *image_new(int width, int height, int channels) {
@@ -34,6 +27,10 @@ struct image *image_new(int width, int height, int channels) {
     return img;
 }
 
+struct image *image_like(struct image *img) {
+    return image_new(img->width, img->height, img->channels);
+}
+
 struct image *image_load(const char *filename) {
     struct image *img = malloc(sizeof(struct image));
     if (img == NULL) {
@@ -53,16 +50,23 @@ struct image *image_load(const char *filename) {
 }
 
 struct image *image_apply_kernel(struct image *img, struct kernel *k) {
-    struct image *new_img = image_new(img->width, img->height, img->channels);
+    return image_apply_kernel_patch(img, k, 0, 0, img->width, img->height);
+}
+
+struct image *image_apply_kernel_patch(struct image *img, struct kernel *k,
+                                       int start_x, int start_y, int end_x,
+                                       int end_y) {
+    struct image *new_img =
+        image_new(end_x - start_x, end_y - start_y, img->channels);
     if (new_img == NULL) {
         return NULL;
     }
 
-    for (int y = 0; y < img->height; y++) {
-        for (int x = 0; x < img->width; x++) {
+    for (int y = start_y; y < end_y; y++) {
+        for (int x = start_x; x < end_x; x++) {
             for (int c = 0; c < img->channels; c++) {
                 float accum = 0.0f;
-                size_t size = kernel_get_size(k);
+                size_t size = k->size;
 
                 for (int ky = 0; ky < size; ky++) {
                     for (int kx = 0; kx < size; kx++) {
@@ -80,8 +84,8 @@ struct image *image_apply_kernel(struct image *img, struct kernel *k) {
                 } else if (accum > 255.0f) {
                     accum = 255.0f;
                 }
-                new_img->bytes[(y * img->width + x) * img->channels + c] =
-                    (stbi_uc)accum;
+                int index = (y - start_y) * new_img->width + (x - start_x);
+                new_img->bytes[index * new_img->channels + c] = (stbi_uc)accum;
             }
         }
     }

@@ -20,11 +20,6 @@ const int EMBOSS_KERNEL_SIZE = 3;
 const float EMBOSS_KERNEL[] = {-2.0f, -1.0f, 0.0f, -1.0f, 1.0f,
                                1.0f,  0.0f,  1.0f, 2.0f};
 
-struct kernel {
-        int size;
-        const float *values;
-};
-
 static void kernel_init(struct kernel *k, int size, const float *values) {
     k->size = size;
     k->values = values;
@@ -61,7 +56,5 @@ float kernel_get_value(struct kernel *k, int x, int y) {
 
     return k->values[y * k->size + x];
 }
-
-int kernel_get_size(struct kernel *k) { return k->size; }
 
 void kernel_free(struct kernel *k) { free(k); }

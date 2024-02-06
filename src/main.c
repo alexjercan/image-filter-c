@@ -1,4 +1,6 @@
+#include <pthread.h>
 #include <stdio.h>
+#include <string.h>
 #define ARGPARSE_IMPLEMENTATION
 #include "argparse.h"
 #include "image.h"
@@ -10,6 +12,74 @@
 struct image *image_apply_kernel_single_thread(struct image *img,
                                                struct kernel *k) {
     return image_apply_kernel(img, k);
+}
+
+struct thread_args {
+        struct image *img;
+        struct kernel *k;
+        int start_x;
+        int start_y;
+        int end_x;
+        int end_y;
+};
+
+void *image_apply_kernel_patch_thread(void *args) {
+    struct thread_args *a = (struct thread_args *)args;
+    return image_apply_kernel_patch(a->img, a->k, a->start_x, a->start_y,
+                                    a->end_x, a->end_y);
+}
+
+struct image *image_apply_kernel_multi_thread(struct image *img,
+                                              struct kernel *k, int threads) {
+    pthread_t thread_ids[threads];
+    int width = img->width;
+    int height = img->height;
+    int channels = img->channels;
+    int patch_height = height / threads;
+
+    struct thread_args args[threads];
+    for (int i = 0; i < threads; i++) {
+        int start_y = i * patch_height;
+        int end_y = (i + 1) * patch_height;
+        if (i == threads - 1) {
+            end_y = height;
+        }
+
+        args[i].img = img;
+        args[i].k = k;
+        args[i].start_x = 0;
+        args[i].start_y = start_y;
+        args[i].end_x = width;
+        args[i].end_y = end_y;
+
+        pthread_create(&thread_ids[i], NULL, image_apply_kernel_patch_thread,
+                       args + i);
+    }
+
+    struct image *new_imgs[threads];
+    for (int i = 0; i < threads; i++) {
+        pthread_join(thread_ids[i], (void **)&new_imgs[i]);
+    }
+
+    struct image *new_img = image_like(img);
+    for (int i = 0; i < threads; i++) {
+        int start_y = i * patch_height;
+        int end_y = (i + 1) * patch_height;
+        if (i == threads - 1) {
+            end_y = height;
+        }
+
+        unsigned char *patch_bytes = new_imgs[i]->bytes;
+        unsigned char *new_img_bytes = new_img->bytes;
+        memcpy(new_img_bytes + start_y * width * channels, patch_bytes,
+               (end_y - start_y) * width * channels);
+    }
+
+    for (int i = 0; i < threads; i++) {
+        image_free(new_imgs[i]);
+    }
+
+    return new_img;
 }
 
 int main(int argc, char *argv[]) {
@@ -81,8 +151,7 @@ int main(int argc, char *argv[]) {
     if (threads == 1) {
         new_img = image_apply_kernel_single_thread(img, k);
     } else {
-        LOG_ERROR("multi-threading is not supported yet");
-        return_defer(1);
+        new_img = image_apply_kernel_multi_thread(img, k, threads);
     }
 
     if (new_img == NULL) {

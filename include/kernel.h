@@ -11,8 +11,7 @@ struct kernel {
         const float *values;
 };
 
-struct kernel *kernel_new(const char *name);
-float kernel_get_value(struct kernel *k, int x, int y);
-void kernel_free(struct kernel *k);
+int kernel_from(struct kernel *k, const char *name);
+float kernel_get_value_at(struct kernel *k, int x, int y);
 
 #endif // KERNEL_H

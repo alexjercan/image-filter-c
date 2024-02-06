@@ -9,9 +9,9 @@
 #include "stb_image.h"
 #include "util.h"
 
-struct image *image_apply_kernel_single_thread(struct image *img,
-                                               struct kernel *k) {
-    return image_apply_kernel(img, k);
+int image_apply_kernel_single_thread(struct image *img, struct kernel *k,
+                                     struct image *out) {
+    return image_apply_kernel(img, k, out);
 }
 
 struct thread_args {
@@ -21,16 +21,17 @@ struct thread_args {
         int start_y;
         int end_x;
         int end_y;
+        struct image *out;
 };
 
 void *image_apply_kernel_patch_thread(void *args) {
     struct thread_args *a = (struct thread_args *)args;
-    return image_apply_kernel_patch(a->img, a->k, a->start_x, a->start_y,
-                                    a->end_x, a->end_y);
+    return (void *)(long)image_apply_kernel_patch(
+        a->img, a->k, a->start_x, a->start_y, a->end_x, a->end_y, a->out);
 }
 
-struct image *image_apply_kernel_multi_thread(struct image *img,
-                                              struct kernel *k, int threads) {
+int image_apply_kernel_multi_thread(struct image *img, struct kernel *k,
+                                    int threads, struct image *out) {
     pthread_t thread_ids[threads];
     int width = img->width;
     int height = img->height;
@@ -51,42 +52,30 @@ struct image *image_apply_kernel_multi_thread(struct image *img,
         args[i].start_y = start_y;
         args[i].end_x = width;
         args[i].end_y = end_y;
+        args[i].out = out;
 
         pthread_create(&thread_ids[i], NULL, image_apply_kernel_patch_thread,
                        args + i);
     }
 
-    struct image *new_imgs[threads];
+    int results[threads];
     for (int i = 0; i < threads; i++) {
-        pthread_join(thread_ids[i], (void **)&new_imgs[i]);
+        pthread_join(thread_ids[i], (void *)&results[i]);
     }
 
-    struct image *new_img = image_like(img);
     for (int i = 0; i < threads; i++) {
-        int start_y = i * patch_height;
-        int end_y = (i + 1) * patch_height;
-        if (i == threads - 1) {
-            end_y = height;
+        if (results[i] != 0) {
+            return 1;
         }
-
-        unsigned char *patch_bytes = new_imgs[i]->bytes;
-        unsigned char *new_img_bytes = new_img->bytes;
-        memcpy(new_img_bytes + start_y * width * channels, patch_bytes,
-               (end_y - start_y) * width * channels);
     }
 
-    for (int i = 0; i < threads; i++) {
-        image_free(new_imgs[i]);
-    }
-
-    return new_img;
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
     int result = 0;
-    struct image *img = NULL;
-    struct kernel *k = NULL;
-    struct image *new_img = NULL;
+    struct image img, out;
+    struct kernel k;
 
     struct argparse_parser *parser = argparse_new(
         "image filter", "image filter basic implementation", "0.0.1");
@@ -138,37 +127,31 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    img = image_load(input);
-    if (img == NULL) {
+    if (image_load(&img, input) != 0) {
         return_defer(1);
     }
 
-    k = kernel_new(filter);
-    if (k == NULL) {
+    if (kernel_from(&k, filter) != 0) {
+        return_defer(1);
+    }
+
+    if (image_init(&out, img.width, img.height, img.channels) != 0) {
         return_defer(1);
     }
 
     if (threads == 1) {
-        new_img = image_apply_kernel_single_thread(img, k);
+        image_apply_kernel_single_thread(&img, &k, &out);
     } else {
-        new_img = image_apply_kernel_multi_thread(img, k, threads);
+        image_apply_kernel_multi_thread(&img, &k, threads, &out);
     }
 
-    if (new_img == NULL) {
-        return_defer(1);
-    }
-
-    if (image_write_pbm(new_img, output) != 0) {
+    if (image_write_pbm(&out, output) != 0) {
         return_defer(1);
     }
 
 defer:
-    if (new_img)
-        image_free(new_img);
-    if (k)
-        kernel_free(k);
-    if (img)
-        image_free(img);
+    image_destroy(&img);
+    image_destroy(&out);
     if (parser)
         argparse_free(parser);
 

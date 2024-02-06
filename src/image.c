@@ -7,61 +7,38 @@
 
 static stbi_uc image_get_pixel(struct image *img, int x, int y, int c);
 
-struct image *image_new(int width, int height, int channels) {
-    struct image *img = malloc(sizeof(struct image));
-    if (img == NULL) {
-        LOG_ERROR("Could not allocate memory for image");
-        return NULL;
-    }
-
+int image_init(struct image *img, int width, int height, int channels) {
     img->width = width;
     img->height = height;
     img->channels = channels;
     img->bytes = malloc(width * height * channels * sizeof(stbi_uc));
+
     if (img->bytes == NULL) {
         LOG_ERROR("Could not allocate memory for image bytes");
-        free(img);
-        return NULL;
+        return 1;
     }
 
-    return img;
+    return 0;
 }
 
-struct image *image_like(struct image *img) {
-    return image_new(img->width, img->height, img->channels);
-}
-
-struct image *image_load(const char *filename) {
-    struct image *img = malloc(sizeof(struct image));
-    if (img == NULL) {
-        LOG_ERROR("Could not allocate memory for image");
-        return NULL;
-    }
-
+int image_load(struct image *img, const char *filename) {
     img->bytes = stbi_load(filename, &img->width, &img->height, &img->channels,
                            NUM_CHANNELS);
     if (img->bytes == NULL) {
         LOG_ERROR("Could not load image: %s", filename);
-        free(img);
-        return NULL;
+        return 1;
     }
 
-    return img;
+    return 0;
 }
 
-struct image *image_apply_kernel(struct image *img, struct kernel *k) {
-    return image_apply_kernel_patch(img, k, 0, 0, img->width, img->height);
+int image_apply_kernel(struct image *img, struct kernel *k, struct image *out) {
+    return image_apply_kernel_patch(img, k, 0, 0, img->width, img->height, out);
 }
 
-struct image *image_apply_kernel_patch(struct image *img, struct kernel *k,
-                                       int start_x, int start_y, int end_x,
-                                       int end_y) {
-    struct image *new_img =
-        image_new(end_x - start_x, end_y - start_y, img->channels);
-    if (new_img == NULL) {
-        return NULL;
-    }
-
+int image_apply_kernel_patch(struct image *img, struct kernel *k, int start_x,
+                             int start_y, int end_x, int end_y,
+                             struct image *out) {
     for (int y = start_y; y < end_y; y++) {
         for (int x = start_x; x < end_x; x++) {
             for (int c = 0; c < img->channels; c++) {
@@ -72,10 +49,12 @@ struct image *image_apply_kernel_patch(struct image *img, struct kernel *k,
                     for (int kx = 0; kx < size; kx++) {
                         int img_x = x + kx - size / 2;
                         int img_y = y + ky - size / 2;
+                        int k_x = size - kx - 1;
+                        int k_y = size - ky - 1;
 
-                        accum += image_get_pixel(img, img_x, img_y, c) *
-                                 kernel_get_value(k, (size - kx - 1),
-                                                  (size - ky - 1));
+                        stbi_uc pixel = image_get_pixel(img, img_x, img_y, c);
+                        float value = kernel_get_value_at(k, k_x, k_y);
+                        accum += pixel * value;
                     }
                 }
 
@@ -84,35 +63,45 @@ struct image *image_apply_kernel_patch(struct image *img, struct kernel *k,
                 } else if (accum > 255.0f) {
                     accum = 255.0f;
                 }
-                int index = (y - start_y) * new_img->width + (x - start_x);
-                new_img->bytes[index * new_img->channels + c] = (stbi_uc)accum;
+                int index = y * out->width + x;
+                out->bytes[index * out->channels + c] = (stbi_uc)accum;
             }
         }
     }
 
-    return new_img;
+    return 0;
 }
 
 int image_write_pbm(struct image *img, const char *filename) {
     FILE *file = fopen(filename, "wb");
+    int result = 0;
     if (file == NULL) {
         LOG_ERROR("Could not open file: %s", filename);
-        return 1;
+        return_defer(1);
+    }
+
+    if (img->channels != 3) {
+        LOG_ERROR("Image must have 3 channels to write to PBM");
+        return_defer(1);
+    }
+
+    if (img->bytes == NULL) {
+        LOG_ERROR("Image has no bytes to write to PBM");
+        return_defer(1);
     }
 
     fprintf(file, "P6\n%d %d\n255\n", img->width, img->height);
     fwrite(img->bytes, sizeof(stbi_uc),
            img->width * img->height * img->channels, file);
 
-    fclose(file);
+defer:
+    if (file)
+        fclose(file);
 
     return 0;
 }
 
-void image_free(struct image *img) {
-    stbi_image_free(img->bytes);
-    free(img);
-}
+void image_destroy(struct image *img) { stbi_image_free(img->bytes); }
 
 static stbi_uc image_get_pixel(struct image *img, int x, int y, int c) {
     if (x < 0 || x >= img->width || y < 0 || y >= img->height || c < 0 ||

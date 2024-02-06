@@ -1,6 +1,5 @@
 #include "kernel.h"
 #include "util.h"
-#include <stdlib.h>
 #include <string.h>
 
 const int BLUR_KERNEL_SIZE = 3;
@@ -25,13 +24,7 @@ static void kernel_init(struct kernel *k, int size, const float *values) {
     k->values = values;
 }
 
-struct kernel *kernel_new(const char *name) {
-    struct kernel *k = malloc(sizeof(struct kernel));
-    if (k == NULL) {
-        LOG_ERROR("Could not allocate memory for kernel");
-        return NULL;
-    }
-
+int kernel_from(struct kernel *k, const char *name) {
     if (strcmp(name, BLUR_KERNEL_NAME) == 0) {
         kernel_init(k, BLUR_KERNEL_SIZE, BLUR_KERNEL);
     } else if (strcmp(name, SHARPEN_KERNEL_NAME) == 0) {
@@ -42,19 +35,16 @@ struct kernel *kernel_new(const char *name) {
         kernel_init(k, EMBOSS_KERNEL_SIZE, EMBOSS_KERNEL);
     } else {
         LOG_ERROR("Unknown kernel name: %s", name);
-        free(k);
-        return NULL;
+        return 1;
     }
 
-    return k;
+    return 0;
 }
 
-float kernel_get_value(struct kernel *k, int x, int y) {
+float kernel_get_value_at(struct kernel *k, int x, int y) {
     if (x < 0 || x >= k->size || y < 0 || y >= k->size) {
         return 0.0f;
     }
 
     return k->values[y * k->size + x];
 }
-
-void kernel_free(struct kernel *k) { free(k); }

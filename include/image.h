@@ -18,6 +18,8 @@ int image_apply_kernel(struct image *img, struct kernel *k, struct image *out);
 int image_apply_kernel_patch(struct image *img, struct kernel *k, int start_x,
                              int start_y, int end_x, int end_y,
                              struct image *out);
+int image_apply_kernel_cuda_wrapper(struct image *img, struct kernel *k,
+                                    struct image *out, int repeats);
 int image_write_pbm(struct image *img, const char *filename);
 void image_destroy(struct image *img);
 

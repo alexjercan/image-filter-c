@@ -30,21 +30,37 @@ int image_apply_kernel_single_thread(struct image *img, struct kernel *k,
 struct thread_args {
         struct image *img;
         struct kernel *k;
-        int start_x;
         int start_y;
-        int end_x;
         int end_y;
+        int repeats;
+        pthread_barrier_t *barrier;
         struct image *out;
 };
 
 void *image_apply_kernel_patch_thread(void *args) {
     struct thread_args *a = (struct thread_args *)args;
-    return (void *)(long)image_apply_kernel_patch(
-        a->img, a->k, a->start_x, a->start_y, a->end_x, a->end_y, a->out);
+
+    for (int i = 0; i < a->repeats; i++) {
+        image_apply_kernel_patch(a->img, a->k, 0, a->start_y, a->img->width,
+                                 a->end_y, a->out);
+
+        pthread_barrier_wait(a->barrier);
+
+        int offset = a->img->width * a->start_y * a->img->channels;
+        int size = a->img->width * (a->end_y - a->start_y) * a->img->channels;
+
+        memcpy(a->img->bytes + offset, a->out->bytes + offset, size);
+    }
+
+    return NULL;
 }
 
 int image_apply_kernel_multi_thread_impl(struct image *img, struct kernel *k,
-                                         int threads, struct image *out) {
+                                         int threads, struct image *out,
+                                         int repeats) {
+    pthread_barrier_t barrier;
+    pthread_barrier_init(&barrier, NULL, threads);
+
     pthread_t thread_ids[threads];
     int width = img->width;
     int height = img->height;
@@ -61,10 +77,10 @@ int image_apply_kernel_multi_thread_impl(struct image *img, struct kernel *k,
 
         args[i].img = img;
         args[i].k = k;
-        args[i].start_x = 0;
         args[i].start_y = start_y;
-        args[i].end_x = width;
         args[i].end_y = end_y;
+        args[i].repeats = repeats;
+        args[i].barrier = &barrier;
         args[i].out = out;
 
         pthread_create(&thread_ids[i], NULL, image_apply_kernel_patch_thread,
@@ -75,6 +91,8 @@ int image_apply_kernel_multi_thread_impl(struct image *img, struct kernel *k,
     for (int i = 0; i < threads; i++) {
         pthread_join(thread_ids[i], (void *)&results[i]);
     }
+
+    pthread_barrier_destroy(&barrier);
 
     for (int i = 0; i < threads; i++) {
         if (results[i] != 0) {
@@ -94,10 +112,7 @@ int image_apply_kernel_multi_thread(struct image *img, struct kernel *k,
     }
     memcpy(tmp.bytes, img->bytes, img->width * img->height * img->channels);
 
-    for (int i = 0; i < repeats; i++) {
-        image_apply_kernel_multi_thread_impl(&tmp, k, threads, out);
-        memcpy(tmp.bytes, out->bytes, out->width * out->height * out->channels);
-    }
+    image_apply_kernel_multi_thread_impl(&tmp, k, threads, out, repeats);
 
     image_destroy(&tmp);
 
@@ -124,7 +139,8 @@ int main(int argc, char *argv[]) {
                           ARGUMENT_TYPE_VALUE);
     argparse_add_argument(parser, 'o', "output", "output file name",
                           ARGUMENT_TYPE_VALUE);
-    argparse_add_argument(parser, 'f', "filter", "filter name: blur,edge,sharpen,emboss",
+    argparse_add_argument(parser, 'f', "filter",
+                          "filter name: blur,edge,sharpen,emboss",
                           ARGUMENT_TYPE_VALUE);
     argparse_add_argument(parser, 'p', "threads", "number of threads",
                           ARGUMENT_TYPE_VALUE);
